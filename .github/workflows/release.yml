@@ -127,24 +127,21 @@ jobs:
             
             ---
             
-            **Commit:** `${{ steps.commit_info.outputs.sha }}`
-            **Author:** ${{ steps.commit_info.outputs.author }}
+            **Commit:** [`${{ steps.commit_info.outputs.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
             
             ### Downloads
             
             | Platform | Architecture | File |
             |----------|--------------|------|
             | Windows | x64 | `unren-go-windows-x64.exe` |
-            | Windows | x86 (32-bit) | `unren-go-windows-x86.exe` |
+            | Windows | x86 | `unren-go-windows-x86.exe` |
             | Windows | ARM64 | `unren-go-windows-arm64.exe` |
             | Linux | x64 | `unren-go-linux-x64` |
-            | Linux | x86 (32-bit) | `unren-go-linux-x86` |
+            | Linux | x86 | `unren-go-linux-x86` |
             | Linux | ARM64 | `unren-go-linux-arm64` |
-            | Linux | ARM (RPi) | `unren-go-linux-arm` |
-            | macOS | x64 (Intel) | `unren-go-macos-x64` |
-            | macOS | ARM64 (Apple Silicon) | `unren-go-macos-arm64` |
-            
-            > All Linux binaries are statically linked and work on both glibc and musl systems.
+            | Linux | ARM | `unren-go-linux-arm` |
+            | macOS | x64 | `unren-go-macos-x64` |
+            | macOS | ARM64 | `unren-go-macos-arm64` |
           files: |
             dist/*
           draft: false
