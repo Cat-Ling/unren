@@ -18,10 +18,7 @@ go build -o unren-go .
 ```
 
 ### Pre-built binaries
-Download from the releases page for your platform:
-- `unren-go` (Linux)
-- `unren-go.exe` (Windows)
-- `unren-go-darwin` (macOS)
+Download from the [releases page](https://github.com/Cat-Ling/unren) for your platform:
 
 ## Usage
 
@@ -36,31 +33,7 @@ Download from the releases page for your platform:
 
 ### Command Line
 ```bash
-./unren-go --version    # Show version
 ./unren-go --no-menu    # Exit after single operation
-```
-
-## Menu Options
-
-1. Extract RPA packages
-2. Decompile rpyc files
-3. Enable Console and Developer Menu
-4. Enable Quick Save and Quick Load
-5. Force enable skipping of unseen content
-6. Force enable rollback (scroll wheel)
-7. Options 3-6
-8. Options 1, 3-6
-
-## Project Structure
-
-```
-unren-go/
-├── main.go           # CLI entry point
-├── files/            # Embedded RPY templates
-├── rpa/              # RPA archive extraction
-├── patcher/          # RPY file generation
-├── detector/         # Game detection
-└── utils/            # Cross-platform utilities
 ```
 
 ## License
@@ -69,5 +42,4 @@ MIT License
 
 ## Credits
 
-- Original UnRen by [F95Zone community](https://f95zone.to/)
-- Go port by the UnRen-Go contributors
+- [Sam](https://f95zone.to/members/sam.7899/) from F95Zone Community.
