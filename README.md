@@ -1,6 +1,6 @@
 # UnRen-Go
 
-Cross-platform Ren'Py game utility - a Go port of the original UnRen Windows batch script.
+Cross-platform Ren'Py game utility - Ported from [Unren 1.0.11d](https://f95zone.to/threads/unren-bat-v1-0-11d-rpa-extractor-rpyc-decompiler-console-developer-menu-enabler.3083/) 
 
 ## Features
 
