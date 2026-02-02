@@ -1,0 +1,12 @@
+# UnRen Quick Save/Load Enabler
+# This file enables quick save and quick load hotkeys
+# Quick Save: {{.QuickSaveKey}} | Quick Load: {{.QuickLoadKey}}
+
+init 999 python:
+    try:
+        config.underlay[0].keymap['quickSave'] = QuickSave()
+        config.keymap['quickSave'] = '{{.QuickSaveKey}}'
+        config.underlay[0].keymap['quickLoad'] = QuickLoad()
+        config.keymap['quickLoad'] = '{{.QuickLoadKey}}'
+    except:
+        pass
