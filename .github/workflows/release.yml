@@ -1,0 +1,153 @@
+name: Build and Release
+
+on:
+  # Manual trigger with version bump type
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+  # Auto trigger on push to main
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - '*.md'
+      - '.gitignore'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for version calculation
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          # Get latest tag, or default to v0.0.0 if none exists
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Latest tag: $LATEST_TAG"
+      
+      - name: Calculate new version
+        id: calc_version
+        run: |
+          LATEST="${{ steps.get_tag.outputs.latest_tag }}"
+          # Remove 'v' prefix
+          VERSION=${LATEST#v}
+          
+          # Split into major.minor.patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          # Default to patch bump for push events, use input for manual
+          BUMP_TYPE="${{ github.event.inputs.bump_type }}"
+          if [ -z "$BUMP_TYPE" ]; then
+            BUMP_TYPE="patch"
+          fi
+          
+          # Bump version
+          case $BUMP_TYPE in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+      
+      - name: Update version in main.go
+        run: |
+          NEW_VERSION="${{ steps.calc_version.outputs.new_version }}"
+          VERSION_NUM="${NEW_VERSION#v}"
+          sed -i "s/const version = \".*\"/const version = \"$VERSION_NUM\"/" main.go
+          echo "Updated main.go to version $VERSION_NUM"
+      
+      - name: Run build script
+        run: |
+          chmod +x build.sh
+          ./build.sh
+      
+      - name: Get commit info
+        id: commit_info
+        run: |
+          # Get commit title and message
+          COMMIT_TITLE=$(git log -1 --pretty=format:'%s')
+          COMMIT_MESSAGE=$(git log -1 --pretty=format:'%b')
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+          COMMIT_AUTHOR=$(git log -1 --pretty=format:'%an')
+          
+          # Write to multiline output
+          echo "title=$COMMIT_TITLE" >> $GITHUB_OUTPUT
+          echo "sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "author=$COMMIT_AUTHOR" >> $GITHUB_OUTPUT
+          
+          # Handle multiline message
+          {
+            echo 'message<<EOF'
+            echo "$COMMIT_MESSAGE"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.calc_version.outputs.new_version }}
+          name: UnRen-Go ${{ steps.calc_version.outputs.new_version }}
+          body: |
+            ## ${{ steps.commit_info.outputs.title }}
+            
+            ${{ steps.commit_info.outputs.message }}
+            
+            ---
+            
+            **Commit:** `${{ steps.commit_info.outputs.sha }}`
+            **Author:** ${{ steps.commit_info.outputs.author }}
+            
+            ### Downloads
+            
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Windows | x64 | `unren-go-windows-x64.exe` |
+            | Windows | x86 (32-bit) | `unren-go-windows-x86.exe` |
+            | Windows | ARM64 | `unren-go-windows-arm64.exe` |
+            | Linux | x64 | `unren-go-linux-x64` |
+            | Linux | x86 (32-bit) | `unren-go-linux-x86` |
+            | Linux | ARM64 | `unren-go-linux-arm64` |
+            | Linux | ARM (RPi) | `unren-go-linux-arm` |
+            | macOS | x64 (Intel) | `unren-go-macos-x64` |
+            | macOS | ARM64 (Apple Silicon) | `unren-go-macos-arm64` |
+            
+            > All Linux binaries are statically linked and work on both glibc and musl systems.
+          files: |
+            dist/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
