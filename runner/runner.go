@@ -192,35 +192,34 @@ func (r *Runner) findPythonLib(pythonHome string) string {
 }
 
 // SetupTempDir creates a temporary directory and extracts scripts.
+// SetupTempDir creates a temporary directory and extracts scripts.
+// The batch script uses the game root directory (maindir) for these scripts.
 func (r *Runner) SetupTempDir() error {
-	// Create temp directory in game root
-	tempDir := filepath.Join(r.GameInfo.RootDir, ".unren-temp")
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	r.TempDir = tempDir
+	// Use game root directory
+	r.TempDir = r.GameInfo.RootDir
 
-	// Extract rpatool
+	// Extract rpatool to _rpatool.py (matching batch script)
 	rpatool, err := files.GetRPATool(r.IsPython3)
 	if err != nil {
 		return fmt.Errorf("failed to get rpatool: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(tempDir, "rpatool.py"), rpatool, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(r.TempDir, "_rpatool.py"), rpatool, 0644); err != nil {
 		return fmt.Errorf("failed to write rpatool: %w", err)
 	}
 
-	// Extract rpa.py fallback
+	// Extract rpa.py fallback to _rpa.py (matching batch script)
 	rpaFallback, err := files.GetRPAFallback()
 	if err != nil {
 		return fmt.Errorf("failed to get rpa.py: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(tempDir, "rpa.py"), rpaFallback, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(r.TempDir, "_rpa.py"), rpaFallback, 0644); err != nil {
 		return fmt.Errorf("failed to write rpa.py: %w", err)
 	}
 
 	return nil
 }
 
+// SetupUnrpyc extracts the unrpyc decompiler.
 // SetupUnrpyc extracts the unrpyc decompiler.
 func (r *Runner) SetupUnrpyc() error {
 	if r.TempDir == "" {
@@ -233,12 +232,33 @@ func (r *Runner) SetupUnrpyc() error {
 }
 
 // Cleanup removes the temporary directory.
+// Cleanup removes the temporary files.
 func (r *Runner) Cleanup() {
-	if r.TempDir != "" {
-		os.RemoveAll(r.TempDir)
+	if r.TempDir == "" {
+		return
 	}
+
+	files := []string{
+		"_rpatool.py",
+		"_rpa.py",
+		"unrpyc.py",
+		"deobfuscate.py",
+		"_rpatool.pyc", // Python compilation files
+		"_rpa.pyc",
+		"unrpyc.pyc",
+		"deobfuscate.pyc",
+	}
+
+	for _, f := range files {
+		os.Remove(filepath.Join(r.TempDir, f))
+	}
+
+	os.RemoveAll(filepath.Join(r.TempDir, "decompiler"))
+	// Also remove __pycache__ if created
+	os.RemoveAll(filepath.Join(r.TempDir, "__pycache__"))
 }
 
+// getPythonEnv returns the environment variables for Python execution.
 // getPythonEnv returns the environment variables for Python execution.
 func (r *Runner) getPythonEnv() []string {
 	pythonHome := filepath.Dir(r.PythonExe)
@@ -247,13 +267,19 @@ func (r *Runner) getPythonEnv() []string {
 	env = append(env, fmt.Sprintf("PYTHONHOME=%s", pythonHome))
 
 	// Build PYTHONPATH
-	paths := []string{pythonHome, r.GameInfo.RootDir}
+	// Batch script sets: PYTHONPATH=%pythondir%;%pythonlibdir%;%maindir%;%decompilerdir%\
+	paths := []string{pythonHome}
 	if r.PythonLib != "" {
 		paths = append(paths, r.PythonLib)
 	}
+	// Add game root (maindir) and decompiler dir
 	if r.TempDir != "" {
 		paths = append(paths, r.TempDir)
 		paths = append(paths, filepath.Join(r.TempDir, "decompiler"))
+	} else {
+		// Fallback if TempDir not set (shouldn't happen if Setup called)
+		paths = append(paths, r.GameInfo.RootDir)
+		paths = append(paths, filepath.Join(r.GameInfo.RootDir, "decompiler"))
 	}
 
 	sep := string(os.PathListSeparator)
@@ -270,8 +296,8 @@ func (r *Runner) ExtractRPA(rpaPath string) error {
 		}
 	}
 
-	rpatoolPath := filepath.Join(r.TempDir, "rpatool.py")
-	rpaFallbackPath := filepath.Join(r.TempDir, "rpa.py")
+	rpatoolPath := filepath.Join(r.TempDir, "_rpatool.py")
+	rpaFallbackPath := filepath.Join(r.TempDir, "_rpa.py")
 	outputDir := filepath.Dir(rpaPath)
 	env := r.getPythonEnv()
 

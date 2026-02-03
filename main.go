@@ -12,7 +12,6 @@ import (
 
 	"github.com/unren/unren-go/detector"
 	"github.com/unren/unren-go/patcher"
-	"github.com/unren/unren-go/rpa"
 	"github.com/unren/unren-go/runner"
 	"github.com/unren/unren-go/utils"
 )
@@ -154,11 +153,18 @@ func handleExtractRPA(game *detector.GameInfo) {
 		return
 	}
 
+	// Use Python-based extraction via runner (matches original batch script behavior)
+	r, err := runner.NewRunner(game)
+	if err != nil {
+		fmt.Printf("    ! Failed to find Python interpreter: %v\n", err)
+		fmt.Println("      RPA extraction requires the game's bundled Python interpreter.")
+		return
+	}
+	defer r.Cleanup()
+
 	fmt.Println("  Extracting RPA archives...")
 	fmt.Println()
 
-	totalExtracted := 0
-	totalSkipped := 0
 	totalErrors := 0
 
 	for _, rpaPath := range game.RPAFiles {
@@ -166,32 +172,18 @@ func handleExtractRPA(game *detector.GameInfo) {
 		info, _ := os.Stat(rpaPath)
 		fmt.Printf("    + Unpacking \"%s\" - %s\n", relPath, utils.FormatBytes(info.Size()))
 
-		archive, err := rpa.Open(rpaPath)
-		if err != nil {
-			fmt.Printf("    ! Failed to open %s: %v\n", relPath, err)
-			totalErrors++
-			continue
-		}
-
-		result, err := archive.ExtractAll(game.GameDir)
-		if err != nil {
+		if err := r.ExtractRPA(rpaPath); err != nil {
 			fmt.Printf("    ! Failed to extract %s: %v\n", relPath, err)
 			totalErrors++
-			continue
 		}
-
-		totalExtracted += result.Extracted
-		totalSkipped += result.Skipped
-
-		for _, extractErr := range result.Errors {
-			fmt.Printf("    ! %v\n", extractErr)
-		}
-		totalErrors += len(result.Errors)
 	}
 
 	fmt.Println()
-	fmt.Printf("  Summary: %d files extracted, %d skipped, %d errors\n",
-		totalExtracted, totalSkipped, totalErrors)
+	if totalErrors > 0 {
+		fmt.Printf("  Extraction complete with %d errors.\n", totalErrors)
+	} else {
+		fmt.Println("  Extraction complete.")
+	}
 }
 
 func handleDecompileRPYC(game *detector.GameInfo) {

@@ -84,6 +84,8 @@ func GetRPAFallback() ([]byte, error) {
 
 // ExtractUnrpyc extracts the unrpyc decompiler files to the specified directory.
 // If python3 is true, extracts the Python 3 version; otherwise Python 2.
+// Structure matches the batch script: unrpyc.py and deobfuscate.py are placed
+// in destDir, while other files go into destDir/decompiler/ as a package.
 func ExtractUnrpyc(destDir string, python3 bool) error {
 	var fs embed.FS
 	var prefix string
@@ -101,13 +103,20 @@ func ExtractUnrpyc(destDir string, python3 bool) error {
 		return err
 	}
 
-	// Create destination directory
+	// Create decompiler package directory
 	decompilerDir := filepath.Join(destDir, "decompiler")
 	if err := os.MkdirAll(decompilerDir, 0755); err != nil {
 		return err
 	}
 
-	// Extract each file
+	// Files that should go in the root (outside decompiler package)
+	// These scripts import the decompiler package, so they must be outside
+	rootFiles := map[string]bool{
+		"unrpyc.py":      true,
+		"deobfuscate.py": true,
+	}
+
+	// Extract each file to the appropriate location
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -118,7 +127,16 @@ func ExtractUnrpyc(destDir string, python3 bool) error {
 			return err
 		}
 
-		destPath := filepath.Join(decompilerDir, entry.Name())
+		// Determine destination path based on file type
+		var destPath string
+		if rootFiles[entry.Name()] {
+			// Main scripts go in destDir (can import decompiler package)
+			destPath = filepath.Join(destDir, entry.Name())
+		} else {
+			// Package files go in decompiler/
+			destPath = filepath.Join(decompilerDir, entry.Name())
+		}
+
 		if err := os.WriteFile(destPath, content, 0644); err != nil {
 			return err
 		}
