@@ -331,10 +331,16 @@ func (r *Runner) DecompileRPYC(rpycPath string) error {
 		return fmt.Errorf("failed to setup unrpyc: %w", err)
 	}
 
-	unrpycPath := filepath.Join(r.TempDir, "decompiler", "unrpyc.py")
+	unrpycPath := filepath.Join(r.TempDir, "unrpyc.py")
 	env := r.getPythonEnv()
 
-	cmd := exec.Command(r.PythonExe, "-O", unrpycPath, "--init-offset", rpycPath)
+	args := []string{"-O", unrpycPath}
+	if !r.IsPython3 {
+		args = append(args, "--init-offset")
+	}
+	args = append(args, rpycPath)
+
+	cmd := exec.Command(r.PythonExe, args...)
 	cmd.Dir = filepath.Dir(rpycPath)
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
@@ -350,7 +356,7 @@ func (r *Runner) DecompileAllRPYC() (int, int, int, error) {
 		return 0, 0, 0, fmt.Errorf("failed to setup unrpyc: %w", err)
 	}
 
-	unrpycPath := filepath.Join(r.TempDir, "decompiler", "unrpyc.py")
+	unrpycPath := filepath.Join(r.TempDir, "unrpyc.py")
 	env := r.getPythonEnv()
 	gameDir := r.GameInfo.GameDir
 
@@ -397,18 +403,32 @@ func (r *Runner) DecompileAllRPYC() (int, int, int, error) {
 		// Show decompiling message with file size (like batch script)
 		fmt.Printf("    + Decompiling \"%s\" - %d bytes\n", baseName, info.Size())
 
-		cmd := exec.Command(r.PythonExe, "-O", unrpycPath, "--init-offset", path)
+		args := []string{"-O", unrpycPath}
+		if !r.IsPython3 {
+			args = append(args, "--init-offset")
+		}
+		args = append(args, path)
+
+		cmd := exec.Command(r.PythonExe, args...)
 		cmd.Dir = filepath.Dir(path)
 		cmd.Env = env
 
-		if err := cmd.Run(); err == nil {
+		if output, err := cmd.CombinedOutput(); err == nil {
 			// Verify output file was created
 			if _, err := os.Stat(rpyPath); err == nil {
 				success++
 			} else {
+				fmt.Printf("    - Failed to create RPY file: %s.rpy not found.\n", nameWithoutExt)
+				if len(output) > 0 {
+					fmt.Printf("    Output:\n%s\n", string(output))
+				}
 				failed++
 			}
 		} else {
+			fmt.Printf("    - Failed to decompile \"%s\". Error: %v\n", baseName, err)
+			if len(output) > 0 {
+				fmt.Printf("    Output:\n%s\n", string(output))
+			}
 			failed++
 		}
 

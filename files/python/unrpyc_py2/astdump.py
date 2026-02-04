@@ -1,4 +1,4 @@
-# Copyright (c) 2013 CensoredUsername
+# Copyright (c) 2013-2024 CensoredUsername, Jackmcbarn
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -37,11 +37,8 @@ class AstDumper(object):
     it will create a human-readable representation of all interesting
     attributes and write this to a given stream
     """
-    # test try: renpy 7.5/8 removed frozenset -so we do here the same
-    MAP_OPEN = {list: '[', tuple: '(', set: '{'}
-    MAP_CLOSE = {list: ']', tuple: ')', set: '}'}
-    # MAP_OPEN = {list: '[', tuple: '(', set: '{', frozenset: 'frozenset({'}
-    # MAP_CLOSE = {list: ']', tuple: ')', set: '}', frozenset: '})'}
+    MAP_OPEN = {list: '[', tuple: '(', set: 'set({', frozenset: 'frozenset({'}
+    MAP_CLOSE = {list: ']', tuple: ')', set: '})', frozenset: '})'}
 
     def __init__(self, out_file=None, decompile_python=False, no_pyexpr=False,
                  comparable=False, indentation=u'    '):
@@ -69,9 +66,7 @@ class AstDumper(object):
             return
         self.passed.append(ast)
         self.passed_where.append(self.linenumber)
-        # test try: renpy 7.5/8 removed frozenset -so we do here the same
-        # if isinstance(ast, (list, tuple, set, frozenset)):
-        if isinstance(ast, (list, tuple, set)):
+        if isinstance(ast, (list, tuple, set, frozenset)):
             self.print_list(ast)
         elif isinstance(ast, renpy.ast.PyExpr):
             self.print_pyexpr(ast)
@@ -92,12 +87,10 @@ class AstDumper(object):
 
     def print_list(self, ast):
         # handles the printing of simple containers of N elements.
-        # test try: renpy 7.5/8 removed frozenset -so we do here the same
-        # if type(ast) not in (list, tuple, set, frozenset):
-        if type(ast) not in (list, tuple, set):
+        if type(ast) not in (list, tuple, set, frozenset):
             self.p(repr(type(ast)))
-            # for k in (list, tuple, set, frozenset):
-            for k in (list, tuple, set):
+
+            for k in (list, tuple, set, frozenset):
                 if isinstance(ast, k):
                     klass = k
 

@@ -1,4 +1,4 @@
-# Copyright (c) 2016 Jackmcbarn
+# Copyright (c) 2016-2024 Jackmcbarn, CensoredUsername
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -24,9 +24,9 @@ from renpy.test import testast
 
 # Main API
 
-def pprint(out_file, ast, indent_level=0, linenumber=1,
-           skip_indent_until_write=False, printlock=None):
-    return TestcaseDecompiler(out_file, printlock=printlock).dump(
+def pprint(out_file, ast, options,
+           indent_level=0, linenumber=1, skip_indent_until_write=False):
+    return TestcaseDecompiler(out_file, options).dump(
         ast, indent_level, linenumber, skip_indent_until_write)
 
 # Implementation
@@ -129,6 +129,11 @@ class TestcaseDecompiler(DecompilerBase):
             self.write(' pos %s' % ast.position)
         if hasattr(ast, 'always') and ast.always:
             self.write(' always')
+
+    @dispatch(testast.Scroll)
+    def print_scroll(self, ast):
+        self.indent()
+        self.write('scroll "%s"' % string_escape(ast.pattern))
 
     @dispatch(testast.Until)
     def print_until(self, ast):

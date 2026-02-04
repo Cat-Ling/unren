@@ -1,4 +1,4 @@
-# Copyright (c) 2012 Yuri K. Schlesner
+# Copyright (c) 2012-2024 Yuri K. Schlesner, CensoredUsername, Jackmcbarn
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -20,30 +20,41 @@
 
 from __future__ import unicode_literals
 from util import DecompilerBase, First, WordConcatenator, reconstruct_paraminfo, \
-                 reconstruct_arginfo, string_escape, split_logical_lines, Dispatcher
-from util import say_get_code
+                 reconstruct_arginfo, string_escape, split_logical_lines, Dispatcher, \
+                 say_get_code, OptionBase
+from renpycompat import renpy
 
 from operator import itemgetter
 from StringIO import StringIO
 
-import magic
-magic.fake_package(b"renpy")
-import renpy
-
 import screendecompiler
 import sl2decompiler
 import testcasedecompiler
+import atldecompiler
 import codegen
 import astdump
 
-__all__ = ["astdump", "codegen", "magic", "screendecompiler", "sl2decompiler", "testcasedecompiler", "translate", "util", "pprint", "Decompiler"]
+__all__ = ["astdump", "codegen", "magic", "screendecompiler", "sl2decompiler", "testcasedecompiler", "translate", "util", "Options", "pprint", "Decompiler", "renpycompat"]
+
 
 # Main API
 
-def pprint(out_file, ast, indent_level=0,
-           decompile_python=False, printlock=None, translator=None, init_offset=False, tag_outside_block=False):
-    Decompiler(out_file, printlock=printlock,
-               decompile_python=decompile_python, translator=translator).dump(ast, indent_level, init_offset, tag_outside_block)
+# Object that carries configurable decompilation options
+class Options(OptionBase):
+    def __init__(self, indentation="    ", log=None, decompile_python=False,
+                 translator=None, init_offset=False, tag_outside_block=False,
+                 sl_custom_names=None):
+        super(Options, self).__init__(indentation=indentation, log=log)
+
+        # decompilation options
+        self.decompile_python = decompile_python
+        self.translator = translator
+        self.init_offset = init_offset
+        self.tag_outside_block = tag_outside_block
+        self.sl_custom_names = sl_custom_names
+
+def pprint(out_file, ast, options=Options()):
+    Decompiler(out_file, options).dump(ast)
 
 # Implementation
 
@@ -56,11 +67,8 @@ class Decompiler(DecompilerBase):
     # what method to call for which ast class
     dispatch = Dispatcher()
 
-    def __init__(self, out_file=None, decompile_python=False,
-                 indentation = '    ', printlock=None, translator=None):
-        super(Decompiler, self).__init__(out_file, indentation, printlock)
-        self.decompile_python = decompile_python
-        self.translator = translator
+    def __init__(self, out_file, options):
+        super(Decompiler, self).__init__(out_file, options)
 
         self.paired_with = False
         self.say_inside_menu = None
@@ -71,7 +79,6 @@ class Decompiler(DecompilerBase):
         self.is_356c6e34_or_later = False
         self.most_lines_behind = 0
         self.last_lines_behind = 0
-        self.tag_outside_block = False
 
     def advance_to_line(self, linenumber):
         self.last_lines_behind = max(self.linenumber + (0 if self.skip_indent_until_write else 1) - linenumber, 0)
@@ -95,7 +102,7 @@ class Decompiler(DecompilerBase):
         self.last_lines_behind = state[7]
         super(Decompiler, self).rollback_state(state[0])
 
-    def dump(self, ast, indent_level=0, init_offset=False, tag_outside_block=False):
+    def dump(self, ast):
         if (isinstance(ast, (tuple, list)) and len(ast) > 1 and
             isinstance(ast[-1], renpy.ast.Return) and
             (not hasattr(ast[-1], 'expression') or ast[-1].expression is None) and
@@ -104,16 +111,14 @@ class Decompiler(DecompilerBase):
             # Note that this commit first appears in the 6.99 release.
             self.is_356c6e34_or_later = True
 
-        self.tag_outside_block = tag_outside_block
+        if self.options.translator:
+            self.options.translator.translate_dialogue(ast)
 
-        if self.translator:
-            self.translator.translate_dialogue(ast)
-
-        if init_offset and isinstance(ast, (tuple, list)):
+        if self.options.init_offset and isinstance(ast, (tuple, list)):
             self.set_best_init_offset(ast)
 
         # skip_indent_until_write avoids an initial blank line
-        super(Decompiler, self).dump(ast, indent_level, skip_indent_until_write=True)
+        super(Decompiler, self).dump(ast, skip_indent_until_write=True)
         # if there's anything we wanted to write out but didn't yet, do it now
         for m in self.blank_line_queue:
             m(None)
@@ -125,160 +130,17 @@ class Decompiler(DecompilerBase):
         # methods, so don't advance lines for them here.
         if hasattr(ast, 'linenumber') and not isinstance(ast, (renpy.ast.TranslateString, renpy.ast.With, renpy.ast.Label, renpy.ast.Pass, renpy.ast.Return)):
             self.advance_to_line(ast.linenumber)
-        # It doesn't matter what line "block:" is on. The loc of a RawBlock
-        # refers to the first statement inside the block, which we advance
-        # to from print_atl.
-        elif hasattr(ast, 'loc') and not isinstance(ast, renpy.atl.RawBlock):
-            self.advance_to_line(ast.loc[1])
+
         self.dispatch.get(type(ast), type(self).print_unknown)(self, ast)
 
-    # ATL printing functions
+    # ATL subdecompiler hook
 
     def print_atl(self, ast):
-        with self.increase_indent():
-            self.advance_to_line(ast.loc[1])
-            if ast.statements:
-                self.print_nodes(ast.statements)
-            # If a statement ends with a colon but has no block after it, loc will
-            # get set to ('', 0). That isn't supposed to be valid syntax, but it's
-            # the only thing that can generate that.
-            elif ast.loc != ('', 0):
-                self.indent()
-                self.write("pass")
-
-    @dispatch(renpy.atl.RawMultipurpose)
-    def print_atl_rawmulti(self, ast):
-        warp_words = WordConcatenator(False)
-
-        # warpers
-        if ast.warp_function:
-            warp_words.append("warp", ast.warp_function, ast.duration)
-        elif ast.warper:
-            warp_words.append(ast.warper, ast.duration)
-        elif ast.duration != "0":
-            warp_words.append("pause", ast.duration)
-
-        warp = warp_words.join()
-        words = WordConcatenator(warp and warp[-1] != ' ', True)
-
-        # revolution
-        if ast.revolution:
-            words.append(ast.revolution)
-
-        # circles
-        if ast.circles != "0":
-            words.append("circles %s" % ast.circles)
-
-        # splines
-        spline_words = WordConcatenator(False)
-        for name, expressions in ast.splines:
-            spline_words.append(name, expressions[-1])
-            for expression in expressions[:-1]:
-                spline_words.append("knot", expression)
-        words.append(spline_words.join())
-
-        # properties
-        property_words = WordConcatenator(False)
-        for key, value in ast.properties:
-            property_words.append(key, value)
-        words.append(property_words.join())
-
-        # with
-        expression_words = WordConcatenator(False)
-        # TODO There's a lot of cases where pass isn't needed, since we could
-        # reorder stuff so there's never 2 expressions in a row. (And it's never
-        # necessary for the last one, but we don't know what the last one is
-        # since it could get reordered.)
-        needs_pass = len(ast.expressions) > 1
-        for (expression, with_expression) in ast.expressions:
-            expression_words.append(expression)
-            if with_expression:
-                expression_words.append("with", with_expression)
-            if needs_pass:
-                expression_words.append("pass")
-        words.append(expression_words.join())
-
-        to_write = warp + words.join()
-        if to_write:
-            self.indent()
-            self.write(to_write)
-        else:
-            # A trailing comma results in an empty RawMultipurpose being
-            # generated on the same line as the last real one.
-            self.write(",")
-
-    @dispatch(renpy.atl.RawBlock)
-    def print_atl_rawblock(self, ast):
-        self.indent()
-        self.write("block:")
-        self.print_atl(ast)
-
-    @dispatch(renpy.atl.RawChild)
-    def print_atl_rawchild(self, ast):
-        for child in ast.children:
-            self.indent()
-            self.write("contains:")
-            self.print_atl(child)
-
-    @dispatch(renpy.atl.RawChoice)
-    def print_atl_rawchoice(self, ast):
-        for chance, block in ast.choices:
-            self.indent()
-            self.write("choice")
-            if chance != "1.0":
-                self.write(" %s" % chance)
-            self.write(":")
-            self.print_atl(block)
-        if (self.index + 1 < len(self.block) and
-            isinstance(self.block[self.index + 1], renpy.atl.RawChoice)):
-            self.indent()
-            self.write("pass")
-
-    @dispatch(renpy.atl.RawContainsExpr)
-    def print_atl_rawcontainsexpr(self, ast):
-        self.indent()
-        self.write("contains %s" % ast.expression)
-
-    @dispatch(renpy.atl.RawEvent)
-    def print_atl_rawevent(self, ast):
-        self.indent()
-        self.write("event %s" % ast.name)
-
-    @dispatch(renpy.atl.RawFunction)
-    def print_atl_rawfunction(self, ast):
-        self.indent()
-        self.write("function %s" % ast.expr)
-
-    @dispatch(renpy.atl.RawOn)
-    def print_atl_rawon(self, ast):
-        for name, block in sorted(ast.handlers.items(),
-                                  key=lambda i: i[1].loc[1]):
-            self.indent()
-            self.write("on %s:" % name)
-            self.print_atl(block)
-
-    @dispatch(renpy.atl.RawParallel)
-    def print_atl_rawparallel(self, ast):
-        for block in ast.blocks:
-            self.indent()
-            self.write("parallel:")
-            self.print_atl(block)
-        if (self.index + 1 < len(self.block) and
-            isinstance(self.block[self.index + 1], renpy.atl.RawParallel)):
-            self.indent()
-            self.write("pass")
-
-    @dispatch(renpy.atl.RawRepeat)
-    def print_atl_rawrepeat(self, ast):
-        self.indent()
-        self.write("repeat")
-        if ast.repeats:
-            self.write(" %s" % ast.repeats) # not sure if this is even a string
-
-    @dispatch(renpy.atl.RawTime)
-    def print_atl_rawtime(self, ast):
-        self.indent()
-        self.write("time %s" % ast.time)
+        self.linenumber = atldecompiler.pprint(
+            self.out_file, ast, self.options,
+            self.indent_level, self.linenumber, self.skip_indent_until_write
+        )
+        self.skip_indent_until_write = False
 
     # Displayable related functions
 
@@ -427,6 +289,21 @@ class Decompiler(DecompilerBase):
             self.write("with %s" % ast.expr)
             self.paired_with = False
 
+    @dispatch(renpy.ast.Camera)
+    def print_camera(self, ast):
+        self.indent()
+        self.write("camera")
+
+        if ast.name != "master":
+            self.write(" %s" % ast.name)
+
+        if ast.at_list:
+            self.write(" at %s" % ", ".join(ast.at_list))
+
+        if ast.atl is not None:
+            self.write(":")
+            self.print_atl(ast.atl)
+
     # Flow control
 
     @dispatch(renpy.ast.Label)
@@ -434,17 +311,28 @@ class Decompiler(DecompilerBase):
         # If a Call block preceded us, it printed us as "from"
         if (self.index and isinstance(self.block[self.index - 1], renpy.ast.Call)):
             return
-        remaining_blocks = len(self.block) - self.index
-        if remaining_blocks > 1:
-            next_ast = self.block[self.index + 1]
-            # See if we're the label for a menu, rather than a standalone label.
-            if (not ast.block and (not hasattr(ast, 'parameters') or ast.parameters is None) and
-                hasattr(next_ast, 'linenumber') and next_ast.linenumber == ast.linenumber and
-                (isinstance(next_ast, renpy.ast.Menu) or (remaining_blocks > 2 and
-                isinstance(next_ast, renpy.ast.Say) and
-                self.say_belongs_to_menu(next_ast, self.block[self.index + 2])))):
-                self.label_inside_menu = ast
-                return
+
+        # See if we're the label for a menu, rather than a standalone label.
+        if not ast.block and (not hasattr(ast, 'parameters') or ast.parameters is None):
+            remaining_blocks = len(self.block) - self.index
+            if remaining_blocks > 1:
+                # Label followed by a menu
+                next_ast = self.block[self.index + 1]
+                if isinstance(next_ast, renpy.ast.Menu) and next_ast.linenumber == ast.linenumber:
+                    self.label_inside_menu = ast
+                    return
+
+            if remaining_blocks > 2:
+                # Label, followed by a say, followed by a menu
+                next_next_ast = self.block[self.index + 2]
+                if (isinstance(next_ast, renpy.ast.Say) and
+                    isinstance(next_next_ast, renpy.ast.Menu) and
+                    next_next_ast.linenumber == ast.linenumber and
+                    self.say_belongs_to_menu(next_ast, next_next_ast)):
+
+                    self.label_inside_menu = ast
+                    return
+
         self.advance_to_line(ast.linenumber)
         self.indent()
 
@@ -516,8 +404,9 @@ class Decompiler(DecompilerBase):
         statement = First("if %s:", "elif %s:")
 
         for i, (condition, block) in enumerate(ast.entries):
-            # The non-Unicode string "True" is the condition for else:.
-            if (i + 1) == len(ast.entries) and not isinstance(condition, unicode):
+            # The unicode string "True" is used as the condition for else:.
+            # But if it's an actual expression, it's a renpy.ast.PyExpr
+            if (i + 1) == len(ast.entries) and not isinstance(condition, renpy.ast.PyExpr):
                 self.indent()
                 self.write("else:")
             else:
@@ -656,7 +545,8 @@ class Decompiler(DecompilerBase):
             self.write(reconstruct_arginfo(arguments))
 
         if block is not None:
-            if isinstance(condition, unicode):
+            # ren'py uses the unicode string "True" as condition when there isn't one.
+            if isinstance(condition, renpy.ast.PyExpr):
                 self.write(" if %s" % condition)
             self.write(":")
             self.print_nodes(block, 1)
@@ -689,8 +579,8 @@ class Decompiler(DecompilerBase):
                 item_arguments = [None] * len(ast.items)
 
             for (label, condition, block), arguments in zip(ast.items, item_arguments):
-                if self.translator:
-                    label = self.translator.strings.get(label, label)
+                if self.options.translator:
+                    label = self.options.translator.strings.get(label, label)
 
                 state = None
 
@@ -757,14 +647,9 @@ class Decompiler(DecompilerBase):
         self.print_python(ast, early=True)
 
     @dispatch(renpy.ast.Define)
-    @dispatch(renpy.ast.Default)
     def print_define(self, ast):
         self.require_init()
         self.indent()
-        if isinstance(ast, renpy.ast.Default):
-            name = "default"
-        else:
-            name = "define"
 
         # If we have an implicit init block with a non-default priority, we need to store the priority here.
         priority = ""
@@ -772,13 +657,36 @@ class Decompiler(DecompilerBase):
             init = self.parent
             if init.priority != self.init_offset and len(init.block) == 1 and not self.should_come_before(init, ast):
                 priority = " %d" % (init.priority - self.init_offset)
+
         index = ""
         if hasattr(ast, "index") and ast.index is not None:
             index = "[%s]" % ast.index.source
+
+        operator = "="
+        if hasattr(ast, "operator"):
+            operator = ast.operator
+
         if not hasattr(ast, "store") or ast.store == "store":
-            self.write("%s%s %s%s = %s" % (name, priority, ast.varname, index, ast.code.source))
+            self.write("define%s %s%s %s %s" % (priority, ast.varname, index, operator, ast.code.source))
         else:
-            self.write("%s%s %s.%s%s = %s" % (name, priority, ast.store[6:], ast.varname, index, ast.code.source))
+            self.write("define%s %s.%s%s %s %s" % (priority, ast.store[6:], ast.varname, index, operator, ast.code.source))
+
+    @dispatch(renpy.ast.Default)
+    def print_default(self, ast):
+        self.require_init()
+        self.indent()
+
+        # If we have an implicit init block with a non-default priority, we need to store the priority here.
+        priority = ""
+        if isinstance(self.parent, renpy.ast.Init):
+            init = self.parent
+            if init.priority != self.init_offset and len(init.block) == 1 and not self.should_come_before(init, ast):
+                priority = " %d" % (init.priority - self.init_offset)
+
+        if not hasattr(ast, "store") or ast.store == "store":
+            self.write("default%s %s = %s" % (priority, ast.varname, ast.code.source))
+        else:
+            self.write("default%s %s.%s = %s" % (priority, ast.store[6:], ast.varname, ast.code.source))
 
     # Specials
 
@@ -794,10 +702,14 @@ class Decompiler(DecompilerBase):
 
     @dispatch(renpy.ast.Say)
     def print_say(self, ast, inmenu=False):
+        # if this say statement precedes a menu statement, postpone emitting it until we're handling
+        # the menu
         if (not inmenu and self.index + 1 < len(self.block) and
             self.say_belongs_to_menu(ast, self.block[self.index + 1])):
             self.say_inside_menu = ast
             return
+
+        # else just write it.
         self.indent()
         self.write(say_get_code(ast, inmenu))
 
@@ -917,29 +829,17 @@ class Decompiler(DecompilerBase):
         self.require_init()
         screen = ast.screen
         if isinstance(screen, renpy.screenlang.ScreenLangScreen):
-            self.linenumber = screendecompiler.pprint(self.out_file, screen, self.indent_level,
-                                    self.linenumber,
-                                    self.decompile_python,
-                                    self.skip_indent_until_write,
-                                    self.printlock)
+            self.linenumber = screendecompiler.pprint(
+                self.out_file, screen, self.options,
+                self.indent_level, self.linenumber, self.skip_indent_until_write
+            )
             self.skip_indent_until_write = False
 
         elif isinstance(screen, renpy.sl2.slast.SLScreen):
-            def print_atl_callback(linenumber, indent_level, atl):
-                old_linenumber = self.linenumber
-                self.linenumber = linenumber
-                with self.increase_indent(indent_level - self.indent_level):
-                    self.print_atl(atl)
-                new_linenumber = self.linenumber
-                self.linenumber = old_linenumber
-                return new_linenumber
-
-            self.linenumber = sl2decompiler.pprint(self.out_file, screen, print_atl_callback,
-                                    self.indent_level,
-                                    self.linenumber,
-                                    self.skip_indent_until_write,
-                                    self.printlock,
-                                    self.tag_outside_block)
+            self.linenumber = sl2decompiler.pprint(
+                self.out_file, screen, self.options,
+                self.indent_level, self.linenumber, self.skip_indent_until_write
+            )
             self.skip_indent_until_write = False
         else:
             self.print_unknown(screen)
@@ -951,8 +851,15 @@ class Decompiler(DecompilerBase):
         self.require_init()
         self.indent()
         self.write('testcase %s:' % ast.label)
-        self.linenumber = testcasedecompiler.pprint(self.out_file, ast.test.block, self.indent_level + 1,
-                                self.linenumber,
-                                self.skip_indent_until_write,
-                                self.printlock)
+        self.linenumber = testcasedecompiler.pprint(
+            self.out_file, ast.test.block, self.options,
+            self.indent_level + 1, self.linenumber, self.skip_indent_until_write
+        )
         self.skip_indent_until_write = False
+
+    # Rpy python directives
+
+    @dispatch(renpy.ast.RPY)
+    def print_rpy_python(self, ast):
+        self.indent()
+        self.write("rpy python %s" % ast.rest)

@@ -1,4 +1,4 @@
-# Copyright (c) 2021 CensoredUsername
+# Copyright (c) 2021-2024 CensoredUsername
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -32,13 +32,12 @@
 # being layers of base64, string-escape, hex-encoding, zlib-compression, etc.
 # We handle this by just trying these by checking if they fit.
 
-import os
-import zlib
-import struct
 import base64
+import os
+import struct
+import zlib
 from collections import Counter
-from decompiler import magic
-import unrpyc
+from decompiler.renpycompat import pickle_safe_loads
 
 
 # Extractors are simple functions of (fobj, slotno) -> bytes
@@ -277,7 +276,7 @@ def assert_is_normal_rpyc(f):
         return uncompressed
 
 
-def read_ast(f):
+def read_ast(f, context):
     diagnosis = ["Attempting to deobfuscate file:"]
 
     raw_datas = set()
@@ -306,8 +305,7 @@ def read_ast(f):
             diagnosis.append(e.message)
         else:
             diagnosis.extend(d)
-            with unrpyc.printlock:
-                print("\n".join(diagnosis))
+            context.log("\n".join(diagnosis))
             return stmts
 
     diagnosis.append("All strategies failed. Unable to deobfuscate data")
@@ -321,9 +319,7 @@ def try_decrypt_section(raw_data):
     while layers < 10:
         # can we load it yet?
         try:
-            # renpy 7.5/8 compat; we use the switch here also
-            # data, stmts = magic.safe_loads(raw_data, unrpyc.class_factory, {"_ast", "collections"})
-            data, stmts = unrpyc.revertable_switch(raw_data)
+            data, stmts = pickle_safe_loads(raw_data)
         except Exception:
             pass
         else:
