@@ -73,3 +73,17 @@ if errors > 0:
     sys.exit(1)
 ```
 Instead of wrapping the python execution in complex stderr parsing (which is brittle), we patched the "vendor" code directly to behave like a standard CLI tool. This ensures `unren-go` receives a clear signal (`exit status 1`) if *anything* goes wrong, protecting user data.
+
+## 5. Quote Stripping (The Drag & Drop Fix)
+**Handling Linux/Windows terminal artifacts**
+
+When dragging and dropping a folder into a terminal, many shells wrap the path in single (`'`) or double (`"`) quotes. If passed directly to `os.Stat`, these quotes cause the path to be "not found".
+
+**Location:** `main.go` -> `main`
+**The Hack:**
+```go
+gameDir = strings.Trim(flag.Arg(0), "\"'")
+```
+**Origin:** Inspired by `UnRen.command` v0.8.2 (Bash version), which used a similar `${temp#\'}` pattern to handle this for macOS/Linux users. We adopted and modernized this for `unren-go` to ensure a smooth "drag and drop" experience across all platforms.
+
+We also applied this to the **Recovery Menu**, allowing it to accept arbitrary directory paths instead of just menu selections. This allows a user to "drag and drop" a folder directly into the script *after* it fails its initial detection.

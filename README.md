@@ -48,6 +48,7 @@ Run with flags to perform actions immediately (no menu):
 |------|-------|-------------|
 | `--extract` | `-e` | Extract RPA packages |
 | `--decompile` | `-d` | Decompile RPYC files |
+| `--clean` | `-c` | Cleanup processed source files |
 | `--all` | `-a` | Perform all actions |
 | `--console` | | Enable Developer Console/Menu |
 | `--quicksave` | | Enable Quick Save/Load |

@@ -16,7 +16,7 @@ import (
 	"github.com/unren/unren-go/utils"
 )
 
-const version = "0.0.3"
+const version = "0.0.4"
 
 func main() {
 	// Parse command-line flags
@@ -97,7 +97,7 @@ func main() {
 
 	// Handle positional argument for game directory
 	if flag.NArg() > 0 {
-		gameDir = flag.Arg(0)
+		gameDir = strings.Trim(flag.Arg(0), "\"'")
 	} else {
 		gameDir = "."
 	}
@@ -124,6 +124,7 @@ func main() {
 			return
 		}
 
+		utils.ClearTerminal()
 		fmt.Println()
 		fmt.Printf("   ! Error: Cannot locate game files in: %s\n", gameDir)
 		fmt.Println()
@@ -134,8 +135,15 @@ func main() {
 		fmt.Println("    3) Exit")
 		fmt.Println()
 
-		option := readInput("Enter number 1-3: ")
+		option := readInput("Enter number 1-3 (or drag & drop folder): ")
 		fmt.Println()
+
+		// Try to treat input as a path first (drag-and-drop support)
+		cleanedPath := strings.Trim(option, "\"'")
+		if cleanedPath != "" && utils.DirExists(cleanedPath) {
+			gameDir = cleanedPath
+			continue
+		}
 
 		switch option {
 		case "1":
@@ -152,7 +160,9 @@ func main() {
 		case "3":
 			return
 		default:
-			return
+			fmt.Printf("   ! Invalid option: %s\n", option)
+			fmt.Println("     Please enter 1, 2, 3, or a valid path.")
+			continue
 		}
 	}
 
@@ -188,10 +198,11 @@ func main() {
 	}
 
 	// Interactive Mode (Legacy)
-	printBanner()
-
 	// Main menu loop
 	for {
+		utils.ClearTerminal()
+		printBanner()
+		printGameInfo(game)
 		printMenu()
 		option := readInput("Enter number 1-8 (or any other key to Exit): ")
 		fmt.Println()
