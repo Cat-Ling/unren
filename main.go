@@ -16,43 +16,183 @@ import (
 	"github.com/unren/unren-go/utils"
 )
 
-const version = "0.0.1"
+const version = "0.0.3"
 
 func main() {
 	// Parse command-line flags
 	var (
-		showVersion    = flag.Bool("version", false, "Show version information")
-		gameDir        = flag.String("dir", ".", "Game directory path")
-		nonInteractive = flag.Bool("no-menu", false, "Exit after single operation")
+		showVersion bool
+		gameDir     string
+
+		// Action flags
+		extract   bool
+		decompile bool
+		console   bool
+		quicksave bool
+		skip      bool
+		rollback  bool
+		all       bool
+		clean     bool
 	)
+
+	// Custom Usage
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "UnRen-Go v%s\n", version)
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] [game_directory]\n\n", filepath.Base(os.Args[0]))
+
+		fmt.Fprintln(os.Stderr, "General Options:")
+		fmt.Fprintln(os.Stderr, "  -h, --help       Show this help message")
+		fmt.Fprintln(os.Stderr, "  -v, --version    Show version information")
+
+		fmt.Fprintln(os.Stderr, "\nActions:")
+		fmt.Fprintln(os.Stderr, "  -e, --extract    Extract RPA packages")
+		fmt.Fprintln(os.Stderr, "  -d, --decompile  Decompile RPYC files")
+		fmt.Fprintln(os.Stderr, "  -a, --all        Perform ALL actions (extract, decompile, apply all patches)")
+
+		fmt.Fprintln(os.Stderr, "\nPatches:")
+		fmt.Fprintln(os.Stderr, "  --console        Enable Developer Console (SHIFT+O) and Menu (SHIFT+D)")
+		fmt.Fprintln(os.Stderr, "  --quicksave      Enable Quick Save (F5) and Quick Load (F9)")
+		fmt.Fprintln(os.Stderr, "  --skip           Force enable skipping of unseen content")
+		fmt.Fprintln(os.Stderr, "  --rollback       Force enable rollback (scroll wheel)")
+
+		fmt.Fprintln(os.Stderr, "\nAdvanced:")
+		fmt.Fprintln(os.Stderr, "  --clean          Remove source files (.rpa/.rpyc) after SUCCESSFUL extraction/decompilation")
+
+		fmt.Fprintln(os.Stderr, "\nExamples:")
+		fmt.Fprintf(os.Stderr, "  %s -e -d /path/to/game\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  %s --all .\n", filepath.Base(os.Args[0]))
+	}
+
+	// Define flags (support both short and long versions where applicable)
+	// We use direct bindings for one version and manual aliasing for the other if needed,
+	// or just document them as aliases if using a third-party lib.
+	// Since we are using stdlib 'flag', we have to register explicitly.
+
+	flag.BoolVar(&showVersion, "version", false, "Show version")
+	flag.BoolVar(&showVersion, "v", false, "Show version (short)")
+
+	flag.BoolVar(&extract, "extract", false, "Extract RPA")
+	flag.BoolVar(&extract, "e", false, "Extract RPA (short)")
+
+	flag.BoolVar(&decompile, "decompile", false, "Decompile RPYC")
+	flag.BoolVar(&decompile, "d", false, "Decompile RPYC (short)")
+
+	flag.BoolVar(&all, "all", false, "Do everything")
+	flag.BoolVar(&all, "a", false, "Do everything (short)")
+
+	flag.BoolVar(&console, "console", false, "Enable console")
+	flag.BoolVar(&quicksave, "quicksave", false, "Enable quicksave")
+	flag.BoolVar(&skip, "skip", false, "Enable skip")
+	flag.BoolVar(&rollback, "rollback", false, "Enable rollback")
+
+	flag.BoolVar(&clean, "clean", false, "Remove source files on success")
+	flag.BoolVar(&clean, "c", false, "Remove source files on success (short)")
+
 	flag.Parse()
 
-	if *showVersion {
+	if showVersion {
 		fmt.Printf("UnRen-Go v%s\n", version)
-		fmt.Println("Cross-platform Ren'Py game utility")
 		return
 	}
 
-	// Print banner (matches original batch script)
-	printBanner()
+	// Handle positional argument for game directory
+	if flag.NArg() > 0 {
+		gameDir = flag.Arg(0)
+	} else {
+		gameDir = "."
+	}
 
-	// Detect game
-	game, err := detector.DetectGame(*gameDir)
-	if err != nil {
+	// Determine if running in automation mode
+	automationMode := extract || decompile || console || quicksave || skip || rollback || all
+
+	// Detect game loop
+	var game *detector.GameInfo
+
+	for {
+		var err error
+		game, err = detector.DetectGame(gameDir)
+		if err == nil {
+			break
+		}
+
+		// Validation failed
+		if automationMode {
+			fmt.Println()
+			fmt.Printf("   ! Error: Cannot locate game files, unable to continue.\n")
+			fmt.Printf("     Path: %s\n", gameDir)
+			fmt.Println()
+			return
+		}
+
 		fmt.Println()
-		fmt.Printf("   ! Error: Cannot locate game files, unable to continue.\n")
-		fmt.Printf("            Are you sure we're in the game's root or game directory?\n")
+		fmt.Printf("   ! Error: Cannot locate game files in: %s\n", gameDir)
 		fmt.Println()
-		waitForKey()
-		return
+
+		fmt.Println("  Recovery Options:")
+		fmt.Println("    1) Browse for game directory")
+		fmt.Println("    2) Show Help")
+		fmt.Println("    3) Exit")
+		fmt.Println()
+
+		option := readInput("Enter number 1-3: ")
+		fmt.Println()
+
+		switch option {
+		case "1":
+			newDir := browseDirectory(gameDir)
+			if newDir != "" {
+				gameDir = newDir
+				continue // Retry detection with new path
+			}
+			return // User cancelled browsing
+		case "2":
+			flag.Usage()
+			waitForKey()
+			return
+		case "3":
+			return
+		default:
+			return
+		}
 	}
 
 	printGameInfo(game)
 
+	if automationMode {
+		if all {
+			handleAllOptions(game, clean)
+			return
+		}
+
+		if extract {
+			handleExtractRPA(game, clean)
+			fmt.Println()
+		}
+		if decompile {
+			handleDecompileRPYC(game, clean)
+			fmt.Println()
+		}
+		if console {
+			handleEnableConsole(game)
+		}
+		if quicksave {
+			handleEnableQuickSave(game)
+		}
+		if skip {
+			handleEnableSkip(game)
+		}
+		if rollback {
+			handleEnableRollback(game)
+		}
+		return
+	}
+
+	// Interactive Mode (Legacy)
+	printBanner()
+
 	// Main menu loop
 	for {
 		printMenu()
-
 		option := readInput("Enter number 1-8 (or any other key to Exit): ")
 		fmt.Println()
 		printSeparator()
@@ -60,9 +200,9 @@ func main() {
 
 		switch option {
 		case "1":
-			handleExtractRPA(game)
+			handleExtractRPA(game, false) // Cleaning disabled in interactive mode for safety unless we add an option
 		case "2":
-			handleDecompileRPYC(game)
+			handleDecompileRPYC(game, false)
 		case "3":
 			handleEnableConsole(game)
 		case "4":
@@ -74,7 +214,7 @@ func main() {
 		case "7":
 			handleOptionsGroup1(game)
 		case "8":
-			handleAllOptions(game)
+			handleAllOptions(game, false)
 		default:
 			return
 		}
@@ -84,10 +224,6 @@ func main() {
 		fmt.Println()
 		fmt.Println("  Finished!")
 		fmt.Println()
-
-		if *nonInteractive {
-			return
-		}
 
 		again := readInput("Enter \"1\" to go back to the menu, or any other key to exit: ")
 		if again != "1" {
@@ -115,7 +251,7 @@ func printSeparator() {
 }
 
 func printGameInfo(game *detector.GameInfo) {
-	fmt.Printf("  Game:         %s\n", filepath.Base(game.RootDir))
+	fmt.Printf("  Game:         %s\n", game.Name)
 	if game.RenPyVersion > 0 {
 		fmt.Printf("  Ren'Py:       %d.x (", game.RenPyVersion)
 		if game.RenPyVersion >= 8 {
@@ -147,7 +283,7 @@ func printMenu() {
 	fmt.Println()
 }
 
-func handleExtractRPA(game *detector.GameInfo) {
+func handleExtractRPA(game *detector.GameInfo, clean bool) {
 	if !game.HasRPAFiles() {
 		fmt.Println("  There were no .rpa files to unpack.")
 		return
@@ -183,10 +319,30 @@ func handleExtractRPA(game *detector.GameInfo) {
 		fmt.Printf("  Extraction complete with %d errors.\n", totalErrors)
 	} else {
 		fmt.Println("  Extraction complete.")
+
+		if clean {
+			fmt.Println()
+			fmt.Println("  Cleaning up RPA files...")
+			cleaned := 0
+			for _, rpaPath := range game.RPAFiles {
+				if err := os.Remove(rpaPath); err == nil {
+					cleaned++
+				} else {
+					fmt.Printf("    ! Failed to remove %s: %v\n", filepath.Base(rpaPath), err)
+				}
+			}
+			fmt.Printf("    Removed %d .rpa file(s).\n", cleaned)
+		}
+	}
+
+	// Refresh RPYC file list in case new files were extracted
+	// This ensures that if decompilation runs after this, it sees the new files
+	if found, err := utils.FindFilesWithExtension(game.GameDir, ".rpyc"); err == nil {
+		game.RPYCFiles = found
 	}
 }
 
-func handleDecompileRPYC(game *detector.GameInfo) {
+func handleDecompileRPYC(game *detector.GameInfo, clean bool) {
 	if !game.HasRPYCFiles() {
 		fmt.Println("  There were no .rpyc files to decompile.")
 		return
@@ -241,6 +397,23 @@ func handleDecompileRPYC(game *detector.GameInfo) {
 			fmt.Print(p)
 		}
 		fmt.Println()
+	}
+
+	if clean && failed == 0 {
+		fmt.Println()
+		fmt.Println("  Cleaning up RPYC files...")
+		cleaned := 0
+		for _, rpycPath := range game.RPYCFiles {
+			if err := os.Remove(rpycPath); err == nil {
+				cleaned++
+			} else {
+				fmt.Printf("    ! Failed to remove %s: %v\n", filepath.Base(rpycPath), err)
+			}
+		}
+		fmt.Printf("    Removed %d .rpyc file(s).\n", cleaned)
+	} else if clean && failed > 0 {
+		fmt.Println()
+		fmt.Printf("  ! Skipping cleanup because %d files failed to decompile.\n", failed)
 	}
 }
 
@@ -305,10 +478,10 @@ func handleOptionsGroup1(game *detector.GameInfo) {
 	handleEnableRollback(game)
 }
 
-func handleAllOptions(game *detector.GameInfo) {
-	handleExtractRPA(game)
+func handleAllOptions(game *detector.GameInfo, clean bool) {
+	handleExtractRPA(game, clean)
 	fmt.Println()
-	handleDecompileRPYC(game)
+	handleDecompileRPYC(game, clean)
 	fmt.Println()
 	handleOptionsGroup1(game)
 }
@@ -323,4 +496,74 @@ func readInput(prompt string) string {
 func waitForKey() {
 	fmt.Print("            Press Enter to exit...")
 	bufio.NewReader(os.Stdin).ReadString('\n')
+}
+
+// browseDirectory allows interactive directory selection
+func browseDirectory(startPath string) string {
+	currentPath, err := filepath.Abs(startPath)
+	if err != nil {
+		currentPath, _ = os.Getwd()
+	}
+
+	for {
+		fmt.Println("  ----------------------------------------------------")
+		fmt.Printf("  Browsing: %s\n", currentPath)
+		fmt.Println("  ----------------------------------------------------")
+
+		dirs, err := listSubdirectories(currentPath)
+		if err != nil {
+			fmt.Printf("  Error listing directory: %v\n", err)
+			waitForKey()
+			return ""
+		}
+
+		fmt.Println("  [..]  Go Up")
+		fmt.Println("  [.]   SELECT CURRENT DIRECTORY")
+		fmt.Println()
+
+		// List directories with numbers
+		for i, dir := range dirs {
+			fmt.Printf("  [%d]   %s\n", i+1, dir)
+		}
+
+		fmt.Println()
+		fmt.Println("  Enter number to navigate, 'u' to go Up, 's' to Select, or 'q' to Quit")
+		input := readInput("Selection: ")
+
+		switch strings.ToLower(input) {
+		case "u", "..":
+			currentPath = filepath.Dir(currentPath)
+		case "s", ".":
+			return currentPath
+		case "q":
+			return ""
+		default:
+			// Try to parse number
+			var selection int
+			_, err := fmt.Sscanf(input, "%d", &selection)
+			if err == nil {
+				if selection > 0 && selection <= len(dirs) {
+					currentPath = filepath.Join(currentPath, dirs[selection-1])
+					continue
+				}
+			}
+			fmt.Println("  Invalid selection.")
+		}
+	}
+}
+
+// listSubdirectories returns a list of subdirectory names in the given path
+func listSubdirectories(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+	return dirs, nil
 }

@@ -23,18 +23,38 @@ Download from the [releases page](https://github.com/Cat-Ling/unren) for your pl
 ## Usage
 
 ### Interactive Mode
+Run without arguments to launch the interactive menu:
 ```bash
-# From game's root directory
 ./unren-go
-
-# Or specify directory
-./unren-go --dir /path/to/game
 ```
 
-### Command Line
+If the game files aren't found, you'll see a **Recovery Menu** allowing you to browse directories interactively to locate the game.
+
+### Automation & CLI Mode
+Run with flags to perform actions immediately (no menu):
 ```bash
-./unren-go --no-menu    # Exit after single operation
+# Extract RPA and Decompile RPYC
+./unren-go -e -d /path/to/game
+
+# Perform ALL actions (Extract + Decompile + Apply all patches)
+./unren-go --all /path/to/game
+
+# Enable specific features
+./unren-go --console --skip /path/to/game
 ```
+
+### Options
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--extract` | `-e` | Extract RPA packages |
+| `--decompile` | `-d` | Decompile RPYC files |
+| `--all` | `-a` | Perform all actions |
+| `--console` | | Enable Developer Console/Menu |
+| `--quicksave` | | Enable Quick Save/Load |
+| `--skip` | | Force enable skipping unseen content |
+| `--rollback` | | Force enable infinite rollback |
+| `--help` | `-h` | Show help and valid usages |
+| `--version` | `-v` | Show version info |
 
 ## License
 

@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 // GameInfo contains detected information about a Ren'Py game
 type GameInfo struct {
+	// Name of the game (for display purposes)
+	Name string
 	// RootDir is the game's root directory (where the executable is)
 	RootDir string
 	// GameDir is the game's "game" subdirectory
@@ -22,6 +25,8 @@ type GameInfo struct {
 	RPYCFiles []string
 	// HasLib indicates if lib/ directory exists
 	HasLib bool
+	// LibDir is the path to the lib/ directory
+	LibDir string
 	// HasRenPy indicates if renpy/ directory exists
 	HasRenPy bool
 }
@@ -36,6 +41,16 @@ func DetectGame(dir string) (*GameInfo, error) {
 
 	info := &GameInfo{}
 
+	// Check for macOS App Bundle structure
+	// Standard Ren'Py Mac apps: MyApp.app/Contents/Resources/autorun/game
+	macAutorun := filepath.Join(absDir, "Contents", "Resources", "autorun")
+	if utils.DirExists(macAutorun) {
+		// Capture the .app name before switching context
+		info.Name = filepath.Base(absDir)
+		// Switch context to the autorun folder which acts as the game root
+		absDir = macAutorun
+	}
+
 	// Check if we're in the game/ subdirectory or the root
 	if filepath.Base(absDir) == "game" {
 		// We're in the game/ directory, parent is root
@@ -48,15 +63,34 @@ func DetectGame(dir string) (*GameInfo, error) {
 	} else {
 		// Try to find game/ in current directory
 		// Maybe we're in some other subdirectory
+		fmt.Printf("Detection: Failed to find game directory in %s\n", absDir)
 		return nil, &GameNotFoundError{Dir: absDir}
 	}
 
+	// If Name wasn't set by Mac detection, use the internal root dir name
+	if info.Name == "" {
+		info.Name = filepath.Base(info.RootDir)
+	}
+
 	// Check for lib/ and renpy/ directories
-	info.HasLib = utils.DirExists(filepath.Join(info.RootDir, "lib"))
+	libDir := filepath.Join(info.RootDir, "lib")
+	if utils.DirExists(libDir) {
+		info.HasLib = true
+		info.LibDir = libDir
+	} else {
+		// Fallback for macOS: lib/ might be in the parent directory (Contents/Resources/lib)
+		// while root is Contents/Resources/autorun
+		parentLib := filepath.Join(filepath.Dir(info.RootDir), "lib")
+		if utils.DirExists(parentLib) {
+			info.HasLib = true
+			info.LibDir = parentLib
+		}
+	}
+
 	info.HasRenPy = utils.DirExists(filepath.Join(info.RootDir, "renpy"))
 
 	// Detect Ren'Py version
-	info.RenPyVersion = detectRenPyVersion(info.RootDir)
+	info.RenPyVersion = detectRenPyVersion(info)
 
 	// Find RPA files
 	info.RPAFiles, _ = utils.FindFilesWithExtension(info.GameDir, ".rpa")
@@ -68,33 +102,28 @@ func DetectGame(dir string) (*GameInfo, error) {
 }
 
 // detectRenPyVersion attempts to detect the Ren'Py version
-func detectRenPyVersion(rootDir string) int {
+func detectRenPyVersion(info *GameInfo) int {
 	// Check for Python version indicators in lib/ directory
-	libDir := filepath.Join(rootDir, "lib")
-	if !utils.DirExists(libDir) {
-		return 0
-	}
-
-	// Walk lib directory looking for python version hints
-	entries, err := os.ReadDir(libDir)
-	if err != nil {
-		return 0
-	}
-
-	for _, entry := range entries {
-		name := strings.ToLower(entry.Name())
-		// Ren'Py 8 uses Python 3
-		if strings.Contains(name, "py3") || strings.Contains(name, "python3") {
-			return 8
-		}
-		// Ren'Py 7 and earlier use Python 2
-		if strings.Contains(name, "py2") || strings.Contains(name, "python2") {
-			return 7
+	if info.HasLib {
+		// Walk lib directory looking for python version hints
+		entries, err := os.ReadDir(info.LibDir)
+		if err == nil {
+			for _, entry := range entries {
+				name := strings.ToLower(entry.Name())
+				// Ren'Py 8 uses Python 3
+				if strings.Contains(name, "py3") || strings.Contains(name, "python3") {
+					return 8
+				}
+				// Ren'Py 7 and earlier use Python 2
+				if strings.Contains(name, "py2") || strings.Contains(name, "python2") {
+					return 7
+				}
+			}
 		}
 	}
 
 	// Check for specific version files
-	if utils.FileExists(filepath.Join(rootDir, "renpy", "__pycache__")) {
+	if utils.FileExists(filepath.Join(info.RootDir, "renpy", "__pycache__")) {
 		// __pycache__ indicates Python 3, so Ren'Py 8
 		return 8
 	}

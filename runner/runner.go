@@ -48,10 +48,10 @@ func (r *Runner) findPython() (string, string, bool, error) {
 		return "", "", false, fmt.Errorf("game root directory not set")
 	}
 
-	libDir := filepath.Join(r.GameInfo.RootDir, "lib")
-	if _, err := os.Stat(libDir); os.IsNotExist(err) {
-		return "", "", false, fmt.Errorf("lib directory not found at %s", libDir)
+	if !r.GameInfo.HasLib || r.GameInfo.LibDir == "" {
+		return "", "", false, fmt.Errorf("lib directory not found")
 	}
+	libDir := r.GameInfo.LibDir
 
 	// Determine OS prefix and bitness
 	var osPrefix string
@@ -69,6 +69,13 @@ func (r *Runner) findPython() (string, string, bool, error) {
 	bitness := "x86_64"
 	if runtime.GOARCH != "amd64" {
 		bitness = "i686"
+	}
+
+	// Check for macOS App Bundle structure (Check unconditionally to support cross-OS inspection)
+	// Try resolving ../../MacOS/python from LibDir (Contents/Resources/lib -> Contents/MacOS)
+	macExePath := filepath.Join(filepath.Dir(filepath.Dir(libDir)), "MacOS", "python")
+	if _, err := os.Stat(macExePath); err == nil {
+		return macExePath, libDir, true, nil // Assuming Ren'Py 8/Python 3 for simplified mac structure
 	}
 
 	// Try Python 3 paths first (Ren'Py 8)

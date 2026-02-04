@@ -358,12 +358,14 @@ if __name__ == "__main__":
     # Normalize files.
     if len(arguments.files) > 0 and isinstance(arguments.files[0], list):
         arguments.files = arguments.files[0]
-
+    
     try:
         archive = RenPyArchive(archive, padlength=padding, key=key, version=version, verbose=arguments.verbose)
     except IOError as e:
         print('Could not open archive file {0} for reading: {1}'.format(archive, e), file=sys.stderr)
         sys.exit(1)
+    
+    errors = [0]
 
     if arguments.create or arguments.append:
         # We need this seperate function to recursively process directories.
@@ -385,6 +387,7 @@ if __name__ == "__main__":
                         archive.add(outfile, file.read())
                 except Exception as e:
                     print('Could not add file {0} to archive: {1}'.format(filename, e), file=sys.stderr)
+                    errors[0] += 1
 
         # Iterate over the given files to add to archive.
         for filename in arguments.files:
@@ -396,6 +399,8 @@ if __name__ == "__main__":
             archive.save(output)
         except Exception as e:
             print('Could not save archive file: {0}'.format(e), file=sys.stderr)
+            errors[0] += 1
+
     elif arguments.delete:
         # Iterate over the given files to delete from the archive.
         for filename in arguments.files:
@@ -403,6 +408,7 @@ if __name__ == "__main__":
                 archive.remove(filename)
             except Exception as e:
                 print('Could not delete file {0} from archive: {1}'.format(filename, e), file=sys.stderr)
+                errors[0] += 1
 
         # Set version for saving, and save.
         archive.version = version
@@ -410,6 +416,8 @@ if __name__ == "__main__":
             archive.save(output)
         except Exception as e:
             print('Could not save archive file: {0}'.format(e), file=sys.stderr)
+            errors[0] += 1
+
     elif arguments.extract:
         # Either extract the given files, or all files if no files are given.
         if len(arguments.files) > 0:
@@ -439,6 +447,8 @@ if __name__ == "__main__":
                     file.write(contents)
             except Exception as e:
                 print('Could not extract file {0} from archive: {1}'.format(filename, e), file=sys.stderr)
+                errors[0] += 1
+
     elif arguments.list:
         # Print the sorted file list.
         list = archive.list()
@@ -448,4 +458,7 @@ if __name__ == "__main__":
     else:
         print('No operation given :(')
         print('Use {0} --help for usage details.'.format(sys.argv[0]))
+
+    if errors[0] > 0:
+        sys.exit(1)
 
