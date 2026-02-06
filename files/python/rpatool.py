@@ -387,7 +387,7 @@ if __name__ == "__main__":
     if arguments.create or arguments.append:
         # We need this seperate function to recursively process directories.
         def add_file(filename):
-            nonlocal errors
+            global errors
             # If the archive path differs from the actual file path, as given in the argument,
             # extract the archive path and actual file path.
             if filename.find('=') != -1:
