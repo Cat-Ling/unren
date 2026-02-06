@@ -16,7 +16,7 @@ import (
 	"github.com/unren/unren-go/utils"
 )
 
-const version = "0.0.4"
+const version = "0.0.5"
 
 func main() {
 	// Parse command-line flags
